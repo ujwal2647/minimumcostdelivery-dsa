@@ -43,4 +43,4 @@ g++ main.cpp -o network
 - `MinCostDelivery/main.cpp` - C++ menu program
 - `MinCostDelivery/core.h` - DSU, Kruskal, Prim and analysis functions
 
-##This project was developed as a DSA-based application, focusing on implementing core data structures and algorithms. AI was used as an assistance tool for frontend development, code formatting, and adding comments to improve code readability and maintainability, while the core logic and implementation were the primary focus of the project.
+## This project was developed as a DSA-based application, focusing on implementing core data structures and algorithms. AI was used as an assistance tool for frontend development, code formatting, and adding comments to improve code readability and maintainability, while the core logic and implementation were the primary focus of the project.
