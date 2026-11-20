@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Minimum Cost Delivery Network</title>
+<style>
+  body  { font-family: Arial, sans-serif; background: #f2f4f7; margin: 0; color: #222; }
+  h1    { margin: 0; padding: 14px 20px; background: #16324f; color: #fff; font-size: 20px; }
+  .page { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; }
+  .col  { flex: 1 1 380px; }
+  .card { background: #fff; border: 1px solid #d5dbe3; border-radius: 8px; padding: 12px; margin-bottom: 14px; }
+  .card h3 { margin: 0 0 8px; font-size: 15px; }
+  input[type=number] { width: 70px; padding: 5px; }
+  textarea { width: 100%; height: 70px; box-sizing: border-box; }
+  button { padding: 6px 10px; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { border-bottom: 1px solid #e3e7ec; padding: 4px; text-align: left; }
+  #msg.ok { color: #1a7f37; } #msg.bad { color: #c62828; }
+  .big { font-size: 22px; font-weight: bold; }
+  svg  { width: 100%; background: #fff; border: 1px solid #d5dbe3; border-radius: 8px; }
+  .hint { color: #667; font-size: 12px; }
+  .box { background: #fff8e1; border: 1px solid #f0d98a; padding: 8px; border-radius: 6px; margin: 8px 0; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>Minimum Cost Delivery Network &nbsp;<small style="font-weight:normal">Kruskal + DSU</small></h1>
+
+<div class="page">
+  <!-- LEFT: drawing, steps, roads table -->
+  <div class="col">
+    <div class="card">
+      <h3>Network</h3>
+      <svg id="svg" viewBox="0 0 520 400"></svg>
+      <p class="hint">Green = selected road (MST) &nbsp; Grey = not selected &nbsp; Red dashed = failed road &nbsp; Orange = road being checked. Hub colour = connected group.</p>
+    </div>
+
+    <div class="card" id="stepCard" style="display:none">
+      <h3>Step by step (DSU)</h3>
+      <button onclick="go(-1)">&laquo; Back</button>
+      <button onclick="go(1)">Next &raquo;</button>
+      <button id="playBtn" onclick="togglePlay()">&#9654; Auto-play</button>
+      <button onclick="stopSteps()">Close</button>
+      <span id="stepNo"></span>
+      <div class="box" id="stepText"></div>
+      <b>parent[] of each hub:</b> <span id="parents"></span>
+    </div>
+
+    <div class="card">
+      <h3>Roads</h3>
+      <table id="roadTable"></table>
+      <p class="hint" id="noRoads">No roads yet.</p>
+    </div>
+  </div>
+
+  <!-- RIGHT: controls -->
+  <div class="col">
+    <div class="card">
+      <h3>Result</h3>
+      Total cost: <span class="big" id="cost">0</span> &nbsp;
+      Selected roads: <span class="big" id="count">0</span> &nbsp;
+      Components: <span class="big" id="comps">0</span>
+      <div id="saving" style="margin:8px 0 4px; font-size:14px"></div>
+      <div id="chosenList" style="margin-bottom:8px; font-size:14px"></div>
+      <div id="groups" style="margin:8px 0; font-size:14px"></div>
+      <button onclick="startSteps()">Show Kruskal step by step</button>
+    </div>
+
+    <div class="card">
+      <h3>1. Add a hub</h3>
+      Hub ID (0-99): <input type="number" id="hubId">
+      <button onclick="addHub()">Add hub</button>
+    </div>
+
+    <div class="card">
+      <h3>2. Add a road</h3>
+      <input type="number" id="u" placeholder="from"> <input type="number" id="v" placeholder="to"> <input type="number" id="w" placeholder="cost">
+      <button onclick="addRoadFromForm()">Add road</button>
+      <p class="hint">Both hubs must already exist. Cost must be a positive whole number.</p>
+    </div>
+
+    <div class="card">
+      <h3>3. Or paste many roads</h3>
+      <textarea id="bulk" placeholder="One road per line: from to cost&#10;0 1 7&#10;0 3 5&#10;(a single number adds a hub; add the word failed at the end of a line for a failed road)"></textarea>
+      <button onclick="addBulk()">Add these roads</button>
+      <button onclick="exportText()">Show my network as text</button>
+      <button onclick="clearAll()">Clear everything</button>
+    </div>
+
+    <div class="card">
+      <h3>4. Are two hubs connected?</h3>
+      <input type="number" id="ca" placeholder="hub A"> <input type="number" id="cb" placeholder="hub B">
+      <button onclick="testConnection()">Test</button>
+      <div id="connOut" style="margin-top:6px; font-weight:bold"></div>
+      <p class="hint">Uses DSU find(a) = find(b). Failed roads are ignored, so you can test what a closed road does.</p>
+    </div>
+
+    <div class="card">
+      <h3>5. What if a selected road fails?</h3>
+      <button onclick="showImpact()">Check every selected road</button>
+      <div id="impactOut" style="margin-top:8px; font-size:14px"></div>
+      <p class="hint">CRITICAL = no other way to reach some hubs. Otherwise it shows how much more the rebuilt network costs.</p>
+    </div>
+
+    <p id="msg" class="ok"></p>
+    <div class="card">
+      <h3>Statistics</h3>
+      <div id="stats" style="font-size:14px"></div>
+    </div>
+    <div class="card">
+      <h3>Hubs</h3>
+      <div id="hubList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------
+//  DATA  (the user builds the graph, nothing is pre-loaded)
+// ---------------------------------------------------------------
+var hubs  = [];      // hub IDs, e.g. [0, 1, 2]
+var roads = [];      // {u, v, w, failed}
+var stepMode = false;
+var stepIdx  = 0;
+var result   = null;
+var timer    = null;     // used by auto-play
+var COLORS = ["#2563eb", "#e11d48", "#059669", "#d97706", "#7c3aed", "#0891b2", "#be185d", "#65a30d"];
+
+// ---------------------------------------------------------------
+//  DSU (Union-Find) : same idea as the C++ version
+// ---------------------------------------------------------------
+function DSU() {
+  this.parent = [];
+  this.rank = [];
+  for (var i = 0; i < 100; i++) { this.parent.push(i); this.rank.push(0); }
+}
+DSU.prototype.find = function (x) {
+  if (this.parent[x] !== x) this.parent[x] = this.find(this.parent[x]);   // path compression
+  return this.parent[x];
+};
+DSU.prototype.unite = function (a, b) {
+  a = this.find(a); b = this.find(b);
+  if (a === b) return false;                                              // same set -> cycle
+  if (this.rank[a] < this.rank[b]) { var t = a; a = b; b = t; }          // union by rank
+  this.parent[b] = a;
+  if (this.rank[a] === this.rank[b]) this.rank[a]++;
+  return true;
+};
+
+// ---------------------------------------------------------------
+//  KRUSKAL : returns every step, the chosen roads and the groups
+// ---------------------------------------------------------------
+function kruskal() {
+  var usable = roads.filter(function (r) { return !r.failed; });
+  usable.sort(function (a, b) { return a.w - b.w; });
+
+  var dsu = new DSU();
+  var steps = [], chosen = [], total = 0;
+  usable.forEach(function (r) {
+    var ru = dsu.find(r.u), rv = dsu.find(r.v);
+    var added = dsu.unite(r.u, r.v);
+    if (added) { chosen.push(r); total += r.w; }
+    steps.push({ u: r.u, v: r.v, w: r.w, ru: ru, rv: rv, added: added, parent: dsu.parent.slice() });
+  });
+
+  var groups = {};
+  hubs.forEach(function (h) {
+    var root = dsu.find(h);
+    if (!groups[root]) groups[root] = [];
+    groups[root].push(h);
+  });
+  return { steps: steps, chosen: chosen, total: total, groups: Object.keys(groups).map(function (k) { return groups[k]; }) };
+}
+
+// ---------------------------------------------------------------
+//  EDIT OPERATIONS (with checks)
+// ---------------------------------------------------------------
+function say(text, bad) {
+  var m = document.getElementById("msg");
+  m.textContent = text;
+  m.className = bad ? "bad" : "ok";
+}
+function toInt(text) {
+  text = String(text).trim();
+  return /^-?\d+$/.test(text) ? parseInt(text, 10) : null;
+}
+function roadIndex(u, v) {
+  for (var i = 0; i < roads.length; i++)
+    if ((roads[i].u === u && roads[i].v === v) || (roads[i].u === v && roads[i].v === u)) return i;
+  return -1;
+}
+function afterChange(text) { clearImpact(); stopTimer(); stepMode = false; say(text, false); draw(); }
+
+// returns an error text, or "" when the hub was added
+function tryAddHub(id) {
+  if (id === null || id < 0 || id > 99) return "Hub ID must be a whole number from 0 to 99.";
+  if (hubs.indexOf(id) !== -1) return "Hub " + id + " already exists.";
+  hubs.push(id);
+  hubs.sort(function (a, b) { return a - b; });
+  return "";
+}
+// returns an error text, or "" when the road was added
+function tryAddRoad(u, v, w) {
+  if (u === null || v === null || w === null) return "From, to and cost must be whole numbers.";
+  if (hubs.indexOf(u) === -1 || hubs.indexOf(v) === -1) return "Both hubs must exist first.";
+  if (u === v) return "A road needs two different hubs.";
+  if (w <= 0) return "Cost must be a positive number.";
+  if (roadIndex(u, v) !== -1) return "That road already exists.";
+  if (roads.length >= 500) return "Maximum 500 roads.";
+  roads.push({ u: u, v: v, w: w, failed: false });
+  return "";
+}
+
+function addHub() {
+  var id = toInt(document.getElementById("hubId").value);
+  var err = tryAddHub(id);
+  if (err) return say(err, true);
+  document.getElementById("hubId").value = "";
+  afterChange("Hub " + id + " added.");
+}
+function addRoadFromForm() {
+  var u = toInt(document.getElementById("u").value);
+  var v = toInt(document.getElementById("v").value);
+  var w = toInt(document.getElementById("w").value);
+  var err = tryAddRoad(u, v, w);
+  if (err) return say(err, true);
+  afterChange("Road " + u + " - " + v + " added.");
+}
+function addBulk() {
+  var lines = document.getElementById("bulk").value.split("\n");
+  var added = 0, problems = [];
+  lines.forEach(function (line, i) {
+    line = line.replace(/[,;]/g, " ").trim();
+    if (line === "") return;
+    var p = line.split(/\s+/);
+    var where = "line " + (i + 1) + ": ";
+    if (p.length === 1) {                                            // a single number = one hub
+      var err1 = tryAddHub(toInt(p[0]));
+      if (err1) problems.push(where + err1); else added++;
+      return;
+    }
+    var failed = p.length === 4 && p[3].toLowerCase() === "failed";
+    if (p.length !== 3 && !failed) { problems.push(where + "need: from to cost"); return; }
+    var u = toInt(p[0]), v = toInt(p[1]), w = toInt(p[2]);
+    if (u !== null && hubs.indexOf(u) === -1) tryAddHub(u);         // hubs are created automatically
+    if (v !== null && hubs.indexOf(v) === -1) tryAddHub(v);
+    var err = tryAddRoad(u, v, w);
+    if (err) problems.push(where + err);
+    else { added++; if (failed) roads[roads.length - 1].failed = true; }
+  });
+  clearImpact();
+  stopTimer();
+  stepMode = false;
+  say(added + " item(s) added." + (problems.length ? "  Problems: " + problems.join(" | ") : ""), problems.length > 0);
+  draw();
+}
+// write the current network as text (hubs with no road, then one road per line)
+function exportText() {
+  var lines = [];
+  hubs.forEach(function (h) {
+    var used = roads.some(function (r) { return r.u === h || r.v === h; });
+    if (!used) lines.push(h);
+  });
+  roads.forEach(function (r) { lines.push(r.u + " " + r.v + " " + r.w + (r.failed ? " failed" : "")); });
+  document.getElementById("bulk").value = lines.join("\n");
+  say("Your network is shown in the box above. Copy it to keep it.", false);
+}
+// for every selected road: pretend it fails and run Kruskal again
+function showImpact() {
+  var out = document.getElementById("impactOut");
+  if (result.chosen.length === 0) { out.textContent = "No selected roads yet."; return; }
+  var rows = result.chosen.map(function (c) {
+    var was = c.failed;
+    c.failed = true;                                   // pretend this road fails ...
+    var alt = kruskal();
+    c.failed = was;                                    // ... then put it back
+    var text = alt.groups.length > result.groups.length
+      ? "<b style='color:#c62828'>CRITICAL</b> &ndash; some hubs become unreachable"
+      : "network is rebuilt, costs <b>" + (alt.total - result.total) + "</b> more";
+    return "<tr><td>" + c.u + " &ndash; " + c.v + " (cost " + c.w + ")</td><td>" + text + "</td></tr>";
+  });
+  out.innerHTML = "<table>" + rows.join("") + "</table>";
+}
+function clearImpact() { document.getElementById("impactOut").innerHTML = ""; }
+
+// are two hubs connected? (DSU on the working roads)
+function testConnection() {
+  var a = toInt(document.getElementById("ca").value), b = toInt(document.getElementById("cb").value);
+  var out = document.getElementById("connOut");
+  if (a === null || b === null || hubs.indexOf(a) === -1 || hubs.indexOf(b) === -1) {
+    out.innerHTML = '<span style="color:#c62828">Both hubs must exist.</span>';
+    return;
+  }
+  var d = new DSU();
+  roads.forEach(function (r) { if (!r.failed) d.unite(r.u, r.v); });
+  out.innerHTML = d.find(a) === d.find(b)
+    ? '<span style="color:#16a34a">Hubs ' + a + ' and ' + b + ' are CONNECTED</span>'
+    : '<span style="color:#c62828">Hubs ' + a + ' and ' + b + ' are NOT connected</span>';
+}
+function removeHub(id) {
+  hubs = hubs.filter(function (h) { return h !== id; });
+  roads = roads.filter(function (r) { return r.u !== id && r.v !== id; });
+  afterChange("Hub " + id + " removed (with its roads).");
+}
+function removeRoad(i) { roads.splice(i, 1); afterChange("Road removed."); }
+function toggleFail(i) {
+  roads[i].failed = !roads[i].failed;
+  afterChange(roads[i].failed ? "Road marked as failed (ignored)." : "Road restored.");
+}
+function editCost(i) {
+  var w = toInt(prompt("New cost:", roads[i].w));
+  if (w === null || w <= 0) return say("Cost must be a positive whole number.", true);
+  roads[i].w = w;
+  afterChange("Cost updated.");
+}
+function clearAll() {
+  if (!confirm("Remove all hubs and roads?")) return;
+  hubs = []; roads = [];
+  afterChange("Everything cleared.");
+}
+
+// ---------------------------------------------------------------
+//  STEP BY STEP VIEW
+// ---------------------------------------------------------------
+function startSteps() {
+  if (result.steps.length === 0) return say("Add some working roads first.", true);
+  stepMode = true; stepIdx = 0; draw();
+}
+function stopSteps() { stopTimer(); stepMode = false; draw(); }
+function stopTimer() {
+  if (timer) { clearInterval(timer); timer = null; }
+  var b = document.getElementById("playBtn");
+  if (b) b.innerHTML = "&#9654; Auto-play";
+}
+function togglePlay() {
+  if (timer) { stopTimer(); return; }
+  if (stepIdx >= result.steps.length) stepIdx = 0;
+  document.getElementById("playBtn").innerHTML = "&#10074;&#10074; Pause";
+  timer = setInterval(function () {
+    stepIdx++;
+    if (stepIdx >= result.steps.length) stopTimer();     // reached the end: button goes back to Auto-play
+    draw();
+  }, 900);
+}
+function go(d) {
+  stepIdx = Math.max(0, Math.min(result.steps.length, stepIdx + d));
+  draw();
+}
+function rootOf(parent, x) { while (parent[x] !== x) x = parent[x]; return x; }
+
+// ---------------------------------------------------------------
+//  DRAWING
+// ---------------------------------------------------------------
+function roadStatus(r) {
+  if (r.failed) return "fail";
+  if (!stepMode) {
+    return result.chosen.indexOf(r) !== -1 ? "chosen" : "other";
+  }
+  for (var i = 0; i < result.steps.length; i++) {
+    var s = result.steps[i];
+    if ((s.u === r.u && s.v === r.v)) {
+      if (i === stepIdx - 1) return "current";
+      if (i < stepIdx - 1) return s.added ? "chosen" : "rejected";
+      return "waiting";
+    }
+  }
+  return "waiting";
+}
+
+function draw() {
+  result = kruskal();
+
+  // ---- hub positions: spread on a circle ----
+  var pos = {}, n = hubs.length;
+  hubs.forEach(function (h, i) {
+    var a = 2 * Math.PI * i / Math.max(n, 1) - Math.PI / 2;
+    pos[h] = n === 1 ? { x: 260, y: 200 } : { x: 260 + 170 * Math.cos(a), y: 200 + 150 * Math.sin(a) };
+  });
+
+  // ---- hub colours: by DSU group (or by DSU set while stepping) ----
+  var colour = {};
+  if (stepMode) {
+    var par = stepIdx === 0 ? result.steps[0].parent.map(function (_, i) { return i; }) : result.steps[stepIdx - 1].parent;
+    var seen = {}, k = 0;
+    hubs.forEach(function (h) {
+      var r = rootOf(par, h);
+      if (!(r in seen)) seen[r] = k++;
+      colour[h] = COLORS[seen[r] % COLORS.length];
+    });
+  } else {
+    result.groups.forEach(function (g, i) { g.forEach(function (h) { colour[h] = COLORS[i % COLORS.length]; }); });
+  }
+
+  // ---- SVG ----
+  var svg = "";
+  roads.forEach(function (r) {
+    var a = pos[r.u], b = pos[r.v], st = roadStatus(r);
+    var col = "#b5bcc7", wid = 2, dash = "";
+    if (st === "chosen")   { col = "#16a34a"; wid = 5; }
+    if (st === "fail")     { col = "#dc2626"; dash = "8 5"; }
+    if (st === "rejected") { col = "#f3b4b4"; dash = "3 4"; }
+    if (st === "waiting")  { col = "#dde2e9"; }
+    if (st === "current")  { col = result.steps[stepIdx - 1].added ? "#16a34a" : "#f59e0b"; wid = 6; }
+    svg += '<line x1="' + a.x + '" y1="' + a.y + '" x2="' + b.x + '" y2="' + b.y + '" stroke="' + col +
+           '" stroke-width="' + wid + '" stroke-dasharray="' + dash + '"/>';
+    svg += '<text x="' + (a.x + b.x) / 2 + '" y="' + ((a.y + b.y) / 2 + 4) + '" text-anchor="middle" font-size="13" font-weight="bold" ' +
+           'style="paint-order:stroke;stroke:#fff;stroke-width:5px">' + r.w + '</text>';
+  });
+  hubs.forEach(function (h) {
+    svg += '<circle cx="' + pos[h].x + '" cy="' + pos[h].y + '" r="17" fill="' + colour[h] + '"/>';
+    svg += '<text x="' + pos[h].x + '" y="' + (pos[h].y + 5) + '" text-anchor="middle" fill="#fff" font-size="13" font-weight="bold">' + h + '</text>';
+  });
+  if (n === 0) svg = '<text x="260" y="200" text-anchor="middle" fill="#99a" font-size="15">Add your first hub on the right \u2192</text>';
+  document.getElementById("svg").innerHTML = svg;
+
+  // ---- extra numbers: saving and the list of selected roads ----
+  var allCost = 0;
+  roads.forEach(function (r) { if (!r.failed) allCost += r.w; });
+  document.getElementById("saving").innerHTML = result.steps.length
+    ? "Building every working road would cost <b>" + allCost + "</b>. This network costs <b>" + result.total +
+      "</b>, which saves <b>" + (allCost - result.total) + "</b>."
+    : "";
+  document.getElementById("chosenList").innerHTML = result.chosen.length
+    ? "<b>Selected roads:</b> " + result.chosen.map(function (r) { return r.u + "\u2013" + r.v + " (" + r.w + ")"; }).join(", ")
+    : "";
+
+  // ---- result numbers ----
+  document.getElementById("cost").textContent  = result.total;
+  document.getElementById("count").textContent = result.chosen.length;
+  document.getElementById("comps").textContent = result.groups.length;
+  document.getElementById("groups").innerHTML = result.groups.map(function (g, i) {
+    return '<span style="color:' + COLORS[i % COLORS.length] + '">&#9679;</span> Group ' + (i + 1) + ': ' + g.join(", ");
+  }).join("<br>");
+
+  // ---- hubs list ----
+  document.getElementById("hubList").innerHTML = hubs.length ? hubs.map(function (h) {
+    return '<span style="display:inline-block;border:1px solid #ccd;border-radius:12px;padding:2px 4px 2px 9px;margin:2px">' + h +
+           ' <button onclick="removeHub(' + h + ')" style="border:none;background:none;color:#c62828">&times;</button></span>';
+  }).join("") : "No hubs yet.";
+
+  // ---- roads table ----
+  var rows = "<tr><th>From</th><th>To</th><th>Cost</th><th>Status</th><th></th></tr>";
+  roads.forEach(function (r, i) {
+    var st = r.failed ? "failed" : (result.chosen.indexOf(r) !== -1 ? "selected" : "not selected");
+    rows += "<tr><td>" + r.u + "</td><td>" + r.v + "</td><td>" + r.w + "</td><td>" + st + "</td><td>" +
+            '<button onclick="editCost(' + i + ')">Edit</button> ' +
+            '<button onclick="toggleFail(' + i + ')">' + (r.failed ? "Restore" : "Fail") + '</button> ' +
+            '<button onclick="removeRoad(' + i + ')">Remove</button></td></tr>';
+  });
+  document.getElementById("roadTable").innerHTML = roads.length ? rows : "";
+  document.getElementById("noRoads").style.display = roads.length ? "none" : "block";
+
+  // ---- statistics ----
+  var working = roads.filter(function (r) { return !r.failed; });
+  var degree = {};
+  hubs.forEach(function (h) { degree[h] = 0; });
+  working.forEach(function (r) { degree[r.u]++; degree[r.v]++; });
+  var busiest = null, isolated = 0;
+  hubs.forEach(function (h) {
+    if (degree[h] === 0) isolated++;
+    if (busiest === null || degree[h] > degree[busiest]) busiest = h;
+  });
+  var costs = working.map(function (r) { return r.w; });
+  var sum = costs.reduce(function (a, b) { return a + b; }, 0);
+  var st = "Hubs: <b>" + hubs.length + "</b> (isolated: " + isolated + ") &nbsp; Roads: <b>" + roads.length +
+           "</b> (failed: " + (roads.length - working.length) + ")";
+  if (costs.length) {
+    st += "<br>Cheapest road: <b>" + Math.min.apply(null, costs) + "</b> &nbsp; Costliest: <b>" + Math.max.apply(null, costs) +
+          "</b> &nbsp; Average: <b>" + (sum / costs.length).toFixed(1) + "</b>";
+  }
+  if (busiest !== null) st += "<br>Busiest hub: <b>" + busiest + "</b> (" + degree[busiest] + " working roads)";
+  document.getElementById("stats").innerHTML = st;
+  saveLocal();
+
+  // ---- step box ----
+  document.getElementById("stepCard").style.display = stepMode ? "block" : "none";
+  if (stepMode) {
+    var total = result.steps.length, text;
+    document.getElementById("stepNo").textContent = "  Step " + stepIdx + " of " + total;
+    if (stepIdx === 0) {
+      text = "Roads are sorted by cost. Every hub starts alone (parent[x] = x). Press Next.";
+    } else {
+      var s = result.steps[stepIdx - 1];
+      text = "Road " + s.u + " - " + s.v + " (cost " + s.w + "): find(" + s.u + ") = " + s.ru + ", find(" + s.v + ") = " + s.rv + ". " +
+             (s.added ? "<b style='color:#16a34a'>Different sets: join them, road SELECTED.</b>"
+                      : "<b style='color:#c62828'>Same set: it would make a cycle, road SKIPPED.</b>");
+    }
+    document.getElementById("stepText").innerHTML = text;
+    var p = stepIdx === 0 ? null : result.steps[stepIdx - 1].parent;
+    document.getElementById("parents").textContent = hubs.map(function (h) { return h + "\u2192" + (p ? p[h] : h); }).join("   ");
+  }
+}
+
+// keep the graph in the browser, so it is still there after a refresh
+function saveLocal() {
+  try { localStorage.setItem("minCostNetwork", JSON.stringify({ hubs: hubs, roads: roads })); } catch (e) {}
+}
+function loadLocal() {
+  try {
+    var data = JSON.parse(localStorage.getItem("minCostNetwork"));
+    if (data && Array.isArray(data.hubs) && Array.isArray(data.roads)) { hubs = data.hubs; roads = data.roads; }
+  } catch (e) {}
+}
+
+loadLocal();
+draw();
+</script>
+</body>
+</html>
